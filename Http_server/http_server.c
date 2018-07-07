@@ -1,3 +1,4 @@
+
 #include<stdio.h>
 #include<stdlib.h>
 #include<unistd.h>
@@ -7,7 +8,6 @@
 #include<netinet/in.h>
 #include<arpa/inet.h>
 #include<sys/wait.h>
-
 #define SIZE 10240
 
 typedef struct Arg{
@@ -28,11 +28,36 @@ typedef struct Request{
 	int content_length;
 }Request;
 
+int ReadLine(int sock,char buf[],size_t  size){
+  //一次从socket中读取一行字符
+  //把数据放到缓冲区中
+  //如果读取失败，就返回-1
+  //可能遇到的换行符有   \n    \r     \r\n
+  //1.从socket中一次读取一个字符
+  char c = '\0';
+  ssize_t count = 0;//当前读了多少个字符
+  //结束条件：读的长度太长，达到了缓冲区长度的上线
+  //读到了'\n',要考虑兼容问题（将 \r  \r\n  转换成  \n）
+  while(i<size-1 && c != '\n'){
+    ssize_t read_size=recv(sock,&c,1,0);
+  }
+}
+
 void* HttpServer(void* ptr){
 	Arg* arg = (Arg*)ptr;
 	int fd = arg->fd;
 	sockaddr_in addr=arg->addr;
-	//解析首行
+	int err_code = 200;
+	//对字符进行反序列化
+		Request req;
+		memset(&req,0,sizeof(req));
+	//从socket中解析首行
+    if(ReadLine(fd,req.first_line,sizeof(req.first_line))<0){
+      printf("ReadLine\n");
+      fflush(stdout);
+      goto ERR;
+    }
+	
 	//对首行进行解析（解析出方法，url,url_path,query_string）
 	
 	
@@ -92,4 +117,3 @@ int main(int argv,char *argv[]){
 	}
 	tcp_inio(argv[1],atoi(argv[2]));
 }
-
