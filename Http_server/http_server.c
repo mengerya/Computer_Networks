@@ -10,10 +10,6 @@
 #include<sys/wait.h>
 #define SIZE 10240
 
-typedef struct Arg{
-	int fd;
-	sockaddr_in addr;
-}Arg;
 
 typedef struct Request{
 
@@ -28,7 +24,7 @@ typedef struct Request{
 	int content_length;
 }Request;
 
-int ReadLine(int sock,char buf[],size_t  size){
+int ReadLine(int sock,char buf[],ssize_t  size){
   //一次从socket中读取一行字符
   //把数据放到缓冲区中
   //如果读取失败，就返回-1
@@ -38,15 +34,34 @@ int ReadLine(int sock,char buf[],size_t  size){
   ssize_t count = 0;//当前读了多少个字符
   //结束条件：读的长度太长，达到了缓冲区长度的上线
   //读到了'\n',要考虑兼容问题（将 \r  \r\n  转换成  \n）
-  while(i<size-1 && c != '\n'){
+  while(count < (size-1) && c != '\n'){
     ssize_t read_size=recv(sock,&c,1,0);
+    if(read_size<0)
+      return -1;
+    else if(read_size == 0)
+      return -1;
+    if(c == '\r'){
+      //MSG_PEEK选项从内核的缓冲区中读取出字符时，并不会从缓冲区中删除掉该字符
+      //如果遇到\r   再看下一字符是不是 \n   
+      recv(sock,&c,1,MSG_PEEK);
+      if(c == '\n'){
+        //此时的分隔符为  \r\n
+        read_size = recv(sock,&c,1,0);
+      }
+      else{
+        //此时的分隔符为 \r  把分割符转换成  \n
+        c = '\n';
+      }
+    }
+    //   \r\n   \r  都转换成功
+    buf[count++]=c;
   }
+  buf[count]='\0';
+  return count;//返回成功读到首行的字符数
 }
 
 void* HttpServer(void* ptr){
-	Arg* arg = (Arg*)ptr;
-	int fd = arg->fd;
-	sockaddr_in addr=arg->addr;
+  
 	int err_code = 200;
 	//对字符进行反序列化
 		Request req;
@@ -55,7 +70,7 @@ void* HttpServer(void* ptr){
     if(ReadLine(fd,req.first_line,sizeof(req.first_line))<0){
       printf("ReadLine\n");
       fflush(stdout);
-      goto ERR;
+      goto END;
     }
 	
 	//对首行进行解析（解析出方法，url,url_path,query_string）
@@ -64,6 +79,11 @@ void* HttpServer(void* ptr){
 	//对header进行解析（只保留了Content_Length）
 	//对于静态页面，根据url_path,打开对应的文件，根据文件内容构造HTTP响应就可以了
 	//对于动态页面，按照CGI的规则来生成动态页面
+END:
+    if(err_code != 200){
+      ERR_404(fd);
+    }
+    close(fd);
 }
 
 void tcp_inio(char * ip,int port){
@@ -101,19 +121,16 @@ void tcp_inio(char * ip,int port){
 			perror("accept");
 			continue;
 		}
-
 		pthread_t tid = 0;
-		Arg* arg = (Arg*)malloc(sizeof(Arg));
-		arg->fd = new_fd;
-		arg->addr = new_addr;
-		pthread_create(&tid,NULL,HttpServer,(void*)arg);
+		pthread_create(&tid,NULL,HttpServer,(void*)new_fd);
 		pthread_detach(tid);
 	}
 }
-int main(int argv,char *argv[]){
+int main(int argc,char *argv[]){
 	if(3 != argc){
 		printf("errno:[./server][IP][port]\n");
 		return 1;
 	}
 	tcp_inio(argv[1],atoi(argv[2]));
 }
+
