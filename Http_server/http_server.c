@@ -15,6 +15,7 @@ typedef struct Request{
 
 	char first_line[SIZE];
 	char *method;
+  char *url;
 	char *url_path;
 	char *query_string;
 	//char *version;
@@ -23,6 +24,11 @@ typedef struct Request{
 	//content_length是一个整数，用int就可以了
 	int content_length;
 }Request;
+
+
+void ERR_404(int64_t sock){
+
+}
 
 int ReadLine(int sock,char buf[],ssize_t  size){
   //一次从socket中读取一行字符
@@ -61,34 +67,65 @@ int ReadLine(int sock,char buf[],ssize_t  size){
 }
 
 void* HttpServer(void* ptr){
-  
+  int64_t new_sock = (int64_t)ptr;
 	int err_code = 200;
 	//对字符进行反序列化
 		Request req;
 		memset(&req,0,sizeof(req));
 	//从socket中解析首行
-    if(ReadLine(fd,req.first_line,sizeof(req.first_line))<0){
-      printf("ReadLine\n");
-      fflush(stdout);
+    if(ReadLine(new_sock,req.first_line,sizeof(req.first_line))<0){
+      err_code=404;
       goto END;
     }
 	
-	//对首行进行解析（解析出方法，url,url_path,query_string）
-	
+	//对首行进行解析（解析出方法(method)，url）
+    if(ParseHeader(req.first_line,&req.method,&req.url)<0){
+      err_code=404;
+      goto END;
+    }
+  //对url进行解析，解析出url_path,query_string 
+    if(Parseurl(req.url,&req.url_path,&req.query_string)<0){
+      err_code=404;
+      goto END;
+    }
 	
 	//对header进行解析（只保留了Content_Length）
+    if(ParseHeader(new_sock,&req.content_length)<0){
+      err_code=404;
+      goto END;
+    }
 	//对于静态页面，根据url_path,打开对应的文件，根据文件内容构造HTTP响应就可以了
+  //strcasecmp->不区分大小写的比较函数
+    if(strcmp(req.method,"GET")==0 && req.query_string == NULL){
+      //GET请求
+      //query_string==NULL->返回静态页面
+      HandlerStaticFile();
+    }
+    else if(strcmp(req.method,"GET")==0 && req.query_string != NULL){
+      //GET请求
+      //query_string!=NULL->返回动态页面
+      HandlerCGI();
+    }
+    else if(strcmp(req.method,"POST") == 0){
+      //POST请求->返回动态页面
+      HandlerCGI();
+    }
+    else{
+      err_code=404;
+      goto END;
+    }
 	//对于动态页面，按照CGI的规则来生成动态页面
 END:
     if(err_code != 200){
-      ERR_404(fd);
+      ERR_404(new_sock);
     }
-    close(fd);
+    close(new_sock);
 }
 
-void tcp_inio(char * ip,int port){
-        //套接字
-        struct sockaddr_in addr;
+void tcp_inio(char * ip,int64_t port){
+
+  //套接字
+  struct sockaddr_in addr;
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = inet_addr(ip);
 	addr.sin_port = htons(port);
@@ -126,11 +163,13 @@ void tcp_inio(char * ip,int port){
 		pthread_detach(tid);
 	}
 }
+
+
 int main(int argc,char *argv[]){
 	if(3 != argc){
 		printf("errno:[./server][IP][port]\n");
 		return 1;
 	}
 	tcp_inio(argv[1],atoi(argv[2]));
+  return 0;
 }
-
