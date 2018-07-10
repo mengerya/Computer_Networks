@@ -1,4 +1,3 @@
-
 #include<stdio.h>
 #include<stdlib.h>
 #include<unistd.h>
@@ -8,168 +7,206 @@
 #include<netinet/in.h>
 #include<arpa/inet.h>
 #include<sys/wait.h>
-#define SIZE 10240
+#include<strings.h>
+
+#define MAX 10240
+
 
 
 typedef struct Request{
-
-	char first_line[SIZE];
-	char *method;
-  char *url;
-	char *url_path;
-	char *query_string;
-	//char *version;
-	//接下来是header部分，如果要完整的解析下来，此处需要hash表，或二叉搜索树
-	//偷懒：不要其他header,只保留一个content_length
-	//content_length是一个整数，用int就可以了
-	int content_length;
+  char first_line[MAX];//首行
+  //这里忽略不管首行中的版本
+  char * Method;//首行中的方法
+  char * url;
+  char *url_path;
+  char *query_string;
+  int content_length;//Headler中的content_length,
+  // 为了简单，这里不展开其他headler,如果要展开的话，可以考虑哈希表
 }Request;
 
-
-void ERR_404(int64_t sock){
+void ParseCGI(){
 
 }
 
-int ReadLine(int sock,char buf[],ssize_t  size){
-  //一次从socket中读取一行字符
-  //把数据放到缓冲区中
-  //如果读取失败，就返回-1
-  //可能遇到的换行符有   \n    \r     \r\n
-  //1.从socket中一次读取一个字符
+void ParseStatic(){
+
+}
+
+int Parse_url(char *url,char ** url_path,char ** query_string){
+
+}
+
+int split(char * first_line,const char * split_char,char * tok[],int size ){
+  //根据空格切分字符first_line
+  //将空格换成'\0'
+  //将切割后的字符串，每一个子串的首地址存入指针数组tok中
+  //使用strtok函数进行切割，
+  //但是strtok使用静态变量实现的，所以再多线程环境下，
+  //他是不安全的，有可能会导致程序崩溃
+  //在这里要使用线程安全函数  strtok_r
+  char * ptr;
+  int i=0;
+  char * temp = NULL;
+  ptr=strtok_r(first_line,split_char,&temp);
+  while(ptr != NULL){
+    if(i >= size){
+      return i;
+    }
+    tok[i++] = ptr;
+    ptr=strtok_r(NULL,split_char,&temp);
+  }
+  return i;
+}
+
+int ParseFirstLine(char * first_line,char ** url,char ** method){
+  //从首行中解析出url,method
+  //忽略首行中的版本号
+  //它们之间是用空格分割的
+  //把首行按照空格进行切割
+  char * tok[10];
+  int tok_size = split(first_line," ",tok,10);
+  if(tok_size != 3){
+    printf("split failed! tok_size = %d\n",tok_size);
+    return -1;
+  }
+  *method = tok[0];
+  *url = tok[1];
+  return tok_size;
+}
+
+int ReadFirstLine(int new_sock,char* first_line,int size){
+  //读取首行
+  //遇到换行符结束
   char c = '\0';
-  ssize_t count = 0;//当前读了多少个字符
-  //结束条件：读的长度太长，达到了缓冲区长度的上线
-  //读到了'\n',要考虑兼容问题（将 \r  \r\n  转换成  \n）
-  while(count < (size-1) && c != '\n'){
-    ssize_t read_size=recv(sock,&c,1,0);
+  int count=0;
+  //考虑到版本兼容问题，可能遇到的换行符有  \n   \r    \r\n
+  //解决办法： 如果是  \r  \r\n，将它们都转换成\n
+  while(count<size-1 && c != '\n'){
+    ssize_t read_size = recv(new_sock,&c,1,0);//一次只读取一个字符
     if(read_size<0)
-      return -1;
+      return -1;//读取失败
     else if(read_size == 0)
-      return -1;
+      return -1;//读到EOF
     if(c == '\r'){
-      //MSG_PEEK选项从内核的缓冲区中读取出字符时，并不会从缓冲区中删除掉该字符
-      //如果遇到\r   再看下一字符是不是 \n   
-      recv(sock,&c,1,MSG_PEEK);
+      recv(new_sock,&c,1,MSG_PEEK);
+        //MSG_PEEK 查看当前数据。数据将被复制到缓冲区中，但并不从输入队列中删除
       if(c == '\n'){
-        //此时的分隔符为  \r\n
-        read_size = recv(sock,&c,1,0);
+        //当前换行字符为 \r\n
+        //直接将 \n 从new_sock中取出来
+        recv(new_sock,&c,1,0);
       }
       else{
-        //此时的分隔符为 \r  把分割符转换成  \n
+        //当前换行字符为 \r,不用把当前字符从缓冲区中取出，直接把 \r  转换成 \n
         c = '\n';
       }
     }
-    //   \r\n   \r  都转换成功
-    buf[count++]=c;
+    first_line[count++] = c;
   }
-  buf[count]='\0';
-  return count;//返回成功读到首行的字符数
+  first_line[count]='\0';
+  return count;
 }
 
-void* HttpServer(void* ptr){
-  int64_t new_sock = (int64_t)ptr;
-	int err_code = 200;
-	//对字符进行反序列化
-		Request req;
-		memset(&req,0,sizeof(req));
-	//从socket中解析首行
-    if(ReadLine(new_sock,req.first_line,sizeof(req.first_line))<0){
+void Err_404(){
+
+}
+
+void HeadlerRequest(int64_t new_sock){
+  //反序列化
+  Request req;
+  int err_code = 200;//将要返回的状态码
+  
+  //读取首行,将读到的内容放入req中的first_line中
+  printf("first_line len:%ld\n",sizeof(req.first_line));
+  if(ReadFirstLine(new_sock,req.first_line,sizeof(req.first_line)<0)){
       err_code=404;
       goto END;
-    }
-	
-	//对首行进行解析（解析出方法(method)，url）
-    if(ParseHeader(req.first_line,&req.method,&req.url)<0){
+      }
+  //从首行中读取url   Method
+  if(ParseFirstLine(req.first_line,&req.url,&req.Method)<0){
       err_code=404;
       goto END;
-    }
-  //对url进行解析，解析出url_path,query_string 
-    if(Parseurl(req.url,&req.url_path,&req.query_string)<0){
+  }
+  //从url中解析出 url_path query_string
+  if(Parse_url(req.url,&req.url_path,&req.query_string)<0){
+
       err_code=404;
       goto END;
-    }
-	
-	//对header进行解析（只保留了Content_Length）
-    if(ParseHeader(new_sock,&req.content_length)<0){
+  }
+  //根据读到的Method判断方法，并分析该回应动态响应还是静态响应
+  if(strcasecmp(req.Method,"GET")== 0 && req.query_string == NULL){
+    //返回静态页面
+    ParseStatic();
+  }
+  else if(strcasecmp(req.Method,"GET") == 0 && req.query_string != NULL){
+    //返回动态页面
+    ParseCGI();
+  }else if(strcasecmp(req.Method,"POST") == 0){
+    ParseCGI();
+  }
+  else{
+    
       err_code=404;
       goto END;
-    }
-	//对于静态页面，根据url_path,打开对应的文件，根据文件内容构造HTTP响应就可以了
-  //strcasecmp->不区分大小写的比较函数
-    if(strcmp(req.method,"GET")==0 && req.query_string == NULL){
-      //GET请求
-      //query_string==NULL->返回静态页面
-      HandlerStaticFile();
-    }
-    else if(strcmp(req.method,"GET")==0 && req.query_string != NULL){
-      //GET请求
-      //query_string!=NULL->返回动态页面
-      HandlerCGI();
-    }
-    else if(strcmp(req.method,"POST") == 0){
-      //POST请求->返回动态页面
-      HandlerCGI();
-    }
-    else{
-      err_code=404;
-      goto END;
-    }
-	//对于动态页面，按照CGI的规则来生成动态页面
+  }
 END:
-    if(err_code != 200){
-      ERR_404(new_sock);
-    }
-    close(new_sock);
+if(200 != err_code)
+  Err_404();
+
+  close(new_sock);
+
 }
 
-void tcp_inio(char * ip,int64_t port){
+void* CreateWorker(void * arg){
+  int64_t new_sock = (int64_t)arg;
+  HeadlerRequest(new_sock);
+  return NULL;
+}
 
-  //套接字
+void tcp_init(char * ip,short port){
+  int sock = socket(AF_INET,SOCK_STREAM,0);
+  if(sock<0){
+    perror("sock");
+    return;
+  }
   struct sockaddr_in addr;
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = inet_addr(ip);
-	addr.sin_port = htons(port);
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = inet_addr(ip);
+  addr.sin_port = htons(port);
 
-	int fd = socket(AF_INET,SOCK_STREAM,0);
-	if(fd < 0){
-		perror("socket");
-		return;
-	}
+  int ret = bind(sock,(struct sockaddr*)&addr,sizeof(addr));
+  if(ret<0){
+    perror("bind");
+    return;
+  }
 
-	int ret = bind(fd,(struct sockaddr*)&addr,sizeof(addr));
-	if(ret < 0){
-		perror("bind");
-		return;
-	}
+  ret = listen(sock,10);
+  if(ret<0){
+    perror("listen");
+    return;
+  }
 
-	ret = listen(fd,SOMAXCONN);
-	if(ret < 0){
-		perror("listen");
-		return;
-	}
+  printf("server init OK!\n");
 
-	printf("Server Inio OK\n");
-
-	while(1){
-		struct sockaddr_in new_addr;
-		socklen_t len = sizeof(new_addr);
-		int new_fd = accept(fd,(struct sockaddr*)&new_addr,&len);
-		if(new_fd < 0){
-			perror("accept");
-			continue;
-		}
-		pthread_t tid = 0;
-		pthread_create(&tid,NULL,HttpServer,(void*)new_fd);
-		pthread_detach(tid);
-	}
+  //多线程处理请求
+  while(1){
+    struct sockaddr_in peer;
+    socklen_t len;
+    int new_sock=accept(sock,(struct sockaddr*)&peer,&len);
+    if(new_sock<0){
+      perror("accept");
+      continue;
+    }
+    pthread_t tid = 0;
+    pthread_create(&tid,NULL,CreateWorker,(void*)new_sock);
+    pthread_detach(tid);
+  }
 }
 
-
-int main(int argc,char *argv[]){
-	if(3 != argc){
-		printf("errno:[./server][IP][port]\n");
-		return 1;
-	}
-	tcp_inio(argv[1],atoi(argv[2]));
+int main(int argc,char * argv[]){
+  if(3 != argc){
+    printf("error: ./server  [ip] [port]\n");
+    return 1;
+  }
+  tcp_init(argv[1],atoi(argv[2]));
   return 0;
 }
