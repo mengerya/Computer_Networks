@@ -32,9 +32,6 @@ void ParseStatic(){
 
 }
 
-int Parse_url(char *url,char ** url_path,char ** query_string){
-
-}
 
 int split(char * first_line,const char * split_char,char * tok[],int size ){
   //根据空格切分字符first_line
@@ -58,6 +55,25 @@ int split(char * first_line,const char * split_char,char * tok[],int size ){
   return i;
 }
 
+
+int Parse_url(char *url,char ** url_path,char ** query_string){
+  //解析url,区分出 url_path  ,  query_string 
+  //在url中，url_path和query_string是以'?'区分的
+  //可以继续使用切分函数来实现
+  char * p = url;
+  *url_path = url;
+  for(;*p != '\0';++p){
+    if(*p == '?'){
+      *p = '\0';
+      *query_string = p+1;
+      return 0;
+    }
+  }
+  *url_path = NULL;
+  return -1;
+}
+
+
 int ParseFirstLine(char * first_line,char ** url,char ** method){
   //从首行中解析出url,method
   //忽略首行中的版本号
@@ -74,7 +90,7 @@ int ParseFirstLine(char * first_line,char ** url,char ** method){
   return tok_size;
 }
 
-int ReadFirstLine(int new_sock,char* first_line,int size){
+int ReadLine(int new_sock,char* first_line,int size){
   //读取首行
   //遇到换行符结束
   char c = '\0';
@@ -106,18 +122,55 @@ int ReadFirstLine(int new_sock,char* first_line,int size){
   return count;
 }
 
-void Err_404(){
+int ReadHeadler(int64_t new_sock,int * p_content_length){
+  //是就读取value,不是就直接丢弃
+  //循环的从socket读取一行判定当前行是不是content_length
+  //读到空行，循环结束
+  char buf[MAX]={0};
+  while(1){
+    ssize_t read_size = ReadLine(new_sock,buf,sizeof(buf));
+    if(read_size<=0)
+      return -1;
+    //处理读完的情况,Headler中没有content_length
+    if(strcmp(buf,"\n") == 0){
+      return 0;
+    }
+    //判断当前行是不是content_length
+    //是就读取value,不是就直接丢弃
+    const char * pCon = "content-Length";
+    if(p_content_length != NULL && strncmp(buf,pCon,strlen(pCon)) == 0){
+      *p_content_length = atoi(buf+strlen(pCon));
+    }
+  }
+  return 0;
+}
 
+void Err_404(int64_t sock){
+  //构造一个完整的HTTP响应
+  //状态码是404
+  //构造一个body部分为404相关的错误页面
+  printf("go to Err_404()\n");
+  fflush(stdout);
+  const char* first_line = "HTTP/1.1 404 Not found\n";
+  //headler
+  const char * type_line = "Content-Type: text/html; charset=utf-8";
+  const char * blank_line = "\n";
+  //body
+  const char * html = "<head><meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\"></head>""<h1>页面无法找到!!</h1>";
+  send(sock,first_line,strlen(first_line),0);
+  send(sock,type_line,strlen(type_line),0);
+  send(sock,blank_line,strlen(blank_line),0);
+  send(sock,html,strlen(html),0);
 }
 
 void HeadlerRequest(int64_t new_sock){
   //反序列化
   Request req;
-  int err_code = 200;//将要返回的状态码
+  int err_code = 404;//将要返回的状态码
   
   //读取首行,将读到的内容放入req中的first_line中
   printf("first_line len:%ld\n",sizeof(req.first_line));
-  if(ReadFirstLine(new_sock,req.first_line,sizeof(req.first_line)<0)){
+  if(ReadLine(new_sock,req.first_line,sizeof(req.first_line)<0)){
       err_code=404;
       goto END;
       }
@@ -131,6 +184,11 @@ void HeadlerRequest(int64_t new_sock){
 
       err_code=404;
       goto END;
+  }
+  //读取Headler中的content_length,其他部分暂时不做考虑
+  if(ReadHeadler(new_sock,&req.content_length)<0){
+    err_code=404;
+    goto END;
   }
   //根据读到的Method判断方法，并分析该回应动态响应还是静态响应
   if(strcasecmp(req.Method,"GET")== 0 && req.query_string == NULL){
@@ -148,12 +206,12 @@ void HeadlerRequest(int64_t new_sock){
       err_code=404;
       goto END;
   }
+   
 END:
-if(200 != err_code)
-  Err_404();
-
+  if(200 != err_code){
+    Err_404(new_sock);
+  }
   close(new_sock);
-
 }
 
 void* CreateWorker(void * arg){
