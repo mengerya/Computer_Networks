@@ -8,6 +8,7 @@
 #include<arpa/inet.h>
 #include<sys/wait.h>
 #include<strings.h>
+#include<sys/stat.h>
 
 #define MAX 10240
 
@@ -24,12 +25,51 @@ typedef struct Request{
   // 为了简单，这里不展开其他headler,如果要展开的话，可以考虑哈希表
 }Request;
 
+
+int isDir(char file_path[]){
+  struct stat st;
+  int ret = stat(file_path,&st);
+  if(ret<0){
+    return 0;
+  }
+  if(S_ISDIR(st.st_mode))
+    return 1;
+  return 0;
+}
+
+
+void HandlerFilePath(const char* url_path,char file_path[]){
+  //给url_path加上前缀（HTTP服务器的根目录）
+  //url_path  -->  /index.html 
+  //file_path  -->./wwwroot/index.html
+  sprintf(file_path,"./wwwroot%s",url_path);
+  //例如   
+  //url_path    /or    /image/
+  //如果输入的网址后面什么都没有写，那么默认追加index.html,静态生成页面
+  if(file_path[strlen(file_path)-1] == '/'){
+    strcat(file_path,"index.html");
+  }
+  //url_path  -->  image
+  if(isDir(file_path)){
+    strcat(file_path,"index.html");
+  }
+}
+
+int WriteStaticFile(int64_t sock,char file_path[]){
+
+}
+
 void ParseCGI(){
 
 }
 
-void ParseStatic(){
-
+int ParseStatic(int64_t sock,Request * req){
+  //1.根据url_path 获取到文件在服务器上的真实路径
+  char file_path[MAX] = {0};
+  HandlerFilePath(req->url_path,file_path);
+  //2.读取文件，把文件的内容直接写到socket之中
+  int err_code = WriteStaticFile(sock,file_path);
+  return err_code;
 }
 
 
@@ -166,7 +206,7 @@ void Err_404(int64_t sock){
 void HeadlerRequest(int64_t new_sock){
   //反序列化
   Request req;
-  int err_code = 404;//将要返回的状态码
+  int err_code = 200;//将要返回的状态码
   
   //读取首行,将读到的内容放入req中的first_line中
   printf("first_line len:%ld\n",sizeof(req.first_line));
@@ -193,7 +233,7 @@ void HeadlerRequest(int64_t new_sock){
   //根据读到的Method判断方法，并分析该回应动态响应还是静态响应
   if(strcasecmp(req.Method,"GET")== 0 && req.query_string == NULL){
     //返回静态页面
-    ParseStatic();
+    ParseStatic(new_sock,&req);
   }
   else if(strcasecmp(req.Method,"GET") == 0 && req.query_string != NULL){
     //返回动态页面
