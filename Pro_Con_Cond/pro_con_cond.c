@@ -98,5 +98,4 @@ int main(void){
   //销毁互斥量mutex，条件变量cond
   pthread_mutex_destroy(&mutex);
   pthread_cond_destroy(&cond);
-
 }
