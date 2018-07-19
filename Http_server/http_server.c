@@ -12,7 +12,7 @@
 
 #define MAX 10240
 
-
+ pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct Request{
   char first_line[MAX];//首行
@@ -76,7 +76,7 @@ int ParseStatic(/*int64_t sock,Request * req*/){
 }
 
 
-int split(char * first_line,const char split_char,char * tok[],int size ){
+int split(char * first_line,const char* split_char,char * tok[],int size ){
   //根据空格切分字符first_line
   //将空格换成'\0'
   //将切割后的字符串，每一个子串的首地址存入指针数组tok中
@@ -84,18 +84,17 @@ int split(char * first_line,const char split_char,char * tok[],int size ){
   //但是strtok使用静态变量实现的，所以再多线程环境下，
   //他是不安全的，有可能会导致程序崩溃
   //在这里要使用线程安全函数  strtok_r
+  
   char * ptr;
   int i=0;
   char * temp = NULL;
-  ptr=strtok_r(first_line,&split_char,&temp);
-  printf("first strtok:%s\n",ptr);
-  fflush(stdout);
+  ptr=strtok_r(first_line,split_char,&temp);
   while(ptr != NULL){
     if(i >= size){
       return i;
     }
     tok[i++] = ptr;
-    ptr=strtok_r(NULL,&split_char,&temp);
+    ptr=strtok_r(NULL,split_char,&temp);
   }
   return i;
 }
@@ -105,6 +104,7 @@ int Parse_url(char *url,char ** url_path,char ** query_string){
   //解析url,区分出 url_path  ,  query_string 
   //在url中，url_path和query_string是以'?'区分的
   //可以继续使用切分函数来实现
+  
   char * p = url;
   *url_path = url;
   for(;*p != '\0';++p){
@@ -114,8 +114,8 @@ int Parse_url(char *url,char ** url_path,char ** query_string){
       return 0;
     }
   }
-  *url_path = NULL;
-  return -1;
+  *query_string = NULL;
+  return 0;
 }
 
 
@@ -124,8 +124,9 @@ int ParseFirstLine(char * first_line,char ** url,char ** method){
   //忽略首行中的版本号
   //它们之间是用空格分割的
   //把首行按照空格进行切割
+  
   char * tok[10];
-  int tok_size = split(first_line,' ',tok,10);
+  int tok_size = split(first_line," ",tok,10);
   if(tok_size != 3){
     printf("split failed! tok_size = %d\n",tok_size);
     return -1;
@@ -140,22 +141,9 @@ int ReadLine(int64_t new_sock,char first_line[],int size){
   //遇到换行符结束
   char c = '\0';
   int count=0;
-  //考虑到版本兼容问题，可能遇到的换行符有  \n   \r    \r\n
-  /****************************************************************/ 
-  char input_buf[MAX] = {0};
-  ssize_t read_size = read(new_sock,input_buf,sizeof(input_buf)-1);
-    if(read_size<0){
-      perror("read");
-      return -1;
-    }
-    printf("[ReadLine->new_sock] %s",input_buf);
-    fflush(stdout);
-    /*************************************************************/ 
   //解决办法： 如果是  \r  \r\n，将它们都转换成\n
   while(count<size-1 && c != '\n'){
     ssize_t read_size = recv(new_sock,&c,1,0);//一次只读取一个字符
-    printf("read_size:%ld,c:%c\n",read_size,c);
-    fflush(stdout);
     if(read_size<0)
       return -1;//读取失败
     else if(read_size == 0)
@@ -183,6 +171,7 @@ int ReadHeadler(int64_t new_sock,int * p_content_length){
   //是就读取value,不是就直接丢弃
   //循环的从socket读取一行判定当前行是不是content_length
   //读到空行，循环结束
+  
   char buf[MAX]={0};
   while(1){
     ssize_t read_size = ReadLine(new_sock,buf,sizeof(buf));
@@ -206,8 +195,6 @@ void Err_404(int64_t sock){
   //构造一个完整的HTTP响应
   //状态码是404
   //构造一个body部分为404相关的错误页面
-  printf("go to Err_404()\n");
-  fflush(stdout);
   const char* first_line = "HTTP/1.1 404 Not found\n";
   //headler
   const char * type_line = "Content-Type: text/html; charset=utf-8";
@@ -218,6 +205,8 @@ void Err_404(int64_t sock){
   send(sock,type_line,strlen(type_line),0);
   send(sock,blank_line,strlen(blank_line),0);
   send(sock,html,strlen(html),0);
+  printf("Err_404 OK\n");
+  fflush(stdout);
 }
 
 void PrintRequest(Request * req){
@@ -230,35 +219,28 @@ void PrintRequest(Request * req){
 
 void HeadlerRequest(int64_t new_sock){
   //反序列化
+  printf("HeadlerRequest\n");
   Request req;
-  char input_buf[MAX] = {0};
-  /**************************************************/ 
-  ssize_t read_size = read(new_sock,input_buf,sizeof(input_buf)-1);
-    if(read_size<0){
-      perror("read");
-      return;
-    }
-    printf("[HeadlerRequest->new_sock] %s",input_buf);
-    fflush(stdout);
-    /*************************************************/ 
   int err_code = 200;//将要返回的状态码
-  printf("first_line size:%ld\n",sizeof(req.first_line));
-  fflush(stdout);
   //读取首行,将读到的内容放入req中的first_line中
   if(ReadLine(new_sock,req.first_line,sizeof(req.first_line))<0){
+      printf("ReadLine filed!\n");
+      fflush(stdout);
       err_code=404;
       goto END;
       }
-  printf("first_line:%s\n",req.first_line);
-  fflush(stdout);
   //从首行中读取url   Method
   if(ParseFirstLine(req.first_line,&req.url,&req.Method)<0){
+      printf("ParseFirstLine filed!\n");
+      fflush(stdout);
       err_code=404;
       goto END;
   }
   //从url中解析出 url_path query_string
   if(Parse_url(req.url,&req.url_path,&req.query_string)<0){
 
+      printf("Parse_url filed!\n");
+      fflush(stdout);
       err_code=404;
       goto END;
   }
@@ -297,27 +279,12 @@ END:
 
 void* CreateWorker(void * arg){
   int64_t new_sock = (int64_t)arg;
-  printf("HeadlerRequest will start!\n");
-  fflush(stdout);
-  /*************************测试*****************************/
-  char input_buf[MAX] = {0};
-  ssize_t read_size = read(new_sock,input_buf,sizeof(input_buf)-1);
-    if(read_size<0){
-      perror("read");
-      return NULL;
-    }
-    printf("[Request] %s",input_buf);
-    fflush(stdout);
-    /*********************************************************/ 
-    // char buf[MAX]={0};
-    // const char* hello = "<h1>hello world!</h1>";
-    // sprintf(buf,"HTTP/1.0 200 OK\nContent-Length:%lu\n\n%s",strlen(hello),hello);
-    // write(new_sock,buf,strlen(buf)); 
-    HeadlerRequest(new_sock);
+  printf("CreateWorker\n");
+  HeadlerRequest(new_sock);
   return NULL;
 }
  
-void tcp_init(char * ip,short port){
+void tcp_init(const char * ip,short port){
   int sock = socket(AF_INET,SOCK_STREAM,0);
   if(sock<0){
     perror("sock");
@@ -344,16 +311,15 @@ void tcp_init(char * ip,short port){
 
   //多线程处理请求
   while(1){
+    printf("多线程ing\n");
     struct sockaddr_in peer;
-    socklen_t len;
+    socklen_t len=sizeof(peer);
     int new_sock=accept(sock,(struct sockaddr*)&peer,&len);
     if(new_sock<0){
       perror("accept");
       continue;
     }
-    printf("pthread will start!\n");
-    fflush(stdout);
-    pthread_t tid = 0;
+    pthread_t tid;
     pthread_create(&tid,NULL,CreateWorker,(void*)new_sock);
     pthread_detach(tid);
   }
@@ -367,3 +333,4 @@ int main(int argc,char * argv[]){
   tcp_init(argv[1],atoi(argv[2]));
   return 0;
 }
+
