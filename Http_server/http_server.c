@@ -311,6 +311,7 @@ void tcp_init(const char * ip,short port){
 
   //多线程处理请求
   while(1){
+    pthread_mutex_lock(&mutex);
     printf("多线程ing\n");
     struct sockaddr_in peer;
     socklen_t len=sizeof(peer);
@@ -322,6 +323,7 @@ void tcp_init(const char * ip,short port){
     pthread_t tid;
     pthread_create(&tid,NULL,CreateWorker,(void*)new_sock);
     pthread_detach(tid);
+    pthread_mutex_unlock(&mutex);
   }
 }
 
@@ -333,4 +335,3 @@ int main(int argc,char * argv[]){
   tcp_init(argv[1],atoi(argv[2]));
   return 0;
 }
-
