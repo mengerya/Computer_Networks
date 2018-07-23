@@ -1,4 +1,5 @@
 #include<stdio.h>
+#include<memory.h>
 #include<stdlib.h>
 #include<unistd.h>
 #include<string.h>
@@ -36,8 +37,6 @@ int isDir(char file_path[]){
     return 1;
   return 0;
 }
-
-
 void HandlerFilePath(const char* url_path,char file_path[]){
   //给url_path加上前缀（HTTP服务器的根目录）
   //url_path  -->  /index.html 
@@ -54,9 +53,7 @@ void HandlerFilePath(const char* url_path,char file_path[]){
     strcat(file_path,"index.html");
   }
 }
-
 int WriteStaticFile(int64_t sock,char file_path[]){
-
 }
 */ 
 int ParseCGI(){
@@ -65,7 +62,7 @@ int ParseCGI(){
 
 int ParseStatic(/*int64_t sock,Request * req*/){
   /*
-  //1.根据url_path 获取到文件在服务器上的真实路径
+  //1.根据url_path ��取到文件在服务器上的真实路径
   char file_path[MAX] = {0};
   HandlerFilePath(req->url_path,file_path);
   //2.读取文件，把文件的内容直接写到socket之中
@@ -122,7 +119,7 @@ int Parse_url(char *url,char ** url_path,char ** query_string){
 int ParseFirstLine(char * first_line,char ** url,char ** method){
   //从首行中解析出url,method
   //忽略首行中的版本号
-  //它们之间是用空格分割的
+//它们之间是用空格分割� 
   //把首行按照空格进行切割
   
   char * tok[10];
@@ -146,11 +143,13 @@ int ReadLine(int64_t new_sock,char first_line[],int size){
     ssize_t read_size = recv(new_sock,&c,1,0);//一次只读取一个字符
     if(read_size<0)
       return -1;//读取失败
-    else if(read_size == 0)
+    else if(read_size == 0){
+      printf("ReadLine  EOF!\n");
       return -1;//读到EOF
+    }
     if(c == '\r'){
       recv(new_sock,&c,1,MSG_PEEK);
-        //MSG_PEEK 查看当前数据。数据将被复制到缓冲区中，但并不从输入队列中删除
+      //数据将被复制到缓冲区中，但并不从输入队列中删除
       if(c == '\n'){
         //当前换行字符为 \r\n
         //直接将 \n 从new_sock中取出来
@@ -194,19 +193,19 @@ int ReadHeadler(int64_t new_sock,int * p_content_length){
 void Err_404(int64_t sock){
   //构造一个完整的HTTP响应
   //状态码是404
-  //构造一个body部分为404相关的错误页面
+  //构造body部分为404相关的错误页面
   const char* first_line = "HTTP/1.1 404 Not found\n";
   //headler
-  const char * type_line = "Content-Type: text/html; charset=utf-8";
+  const char * type_line = "Content-Type: text/html; charset=utf-8\n";
   const char * blank_line = "\n";
   //body
-  const char * html = "<head><meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\"></head>""<h1>页面无法找到!!</h1>";
+  const char * html = "<head><meta http-equiv=\"content-Type\" content=\"text/html;charset=utf-8\"></head>""<h1>页面无法找到!!</h1>";
+  /*  <meta http-equiv="content-Type" content="text/html;charset=utf-8">*/
   send(sock,first_line,strlen(first_line),0);
   send(sock,type_line,strlen(type_line),0);
   send(sock,blank_line,strlen(blank_line),0);
   send(sock,html,strlen(html),0);
   printf("Err_404 OK\n");
-  fflush(stdout);
 }
 
 void PrintRequest(Request * req){
@@ -222,7 +221,7 @@ void HeadlerRequest(int64_t new_sock){
   printf("HeadlerRequest\n");
   Request req;
   int err_code = 200;//将要返回的状态码
-  //读取首行,将读到的内容放入req中的first_line中
+  //读取首行,将读到的内容放入req中first_line中
   if(ReadLine(new_sock,req.first_line,sizeof(req.first_line))<0){
       printf("ReadLine filed!\n");
       fflush(stdout);
@@ -256,19 +255,21 @@ void HeadlerRequest(int64_t new_sock){
   //根据读到的Method判断方法，并分析该回应动态响应还是静态响应
   if(strcasecmp(req.Method,"GET")== 0 && req.query_string == NULL){
     //返回静态页面
-    ParseStatic(/*new_sock,&req*/);
+    err_code = ParseStatic(/*new_sock,&req*/);
   }
   else if(strcasecmp(req.Method,"GET") == 0 && req.query_string != NULL){
     //返回动态页面
-    ParseCGI();
+    err_code = ParseCGI();
   }else if(strcasecmp(req.Method,"POST") == 0){
-    ParseCGI();
+    err_code = ParseCGI();
   }
   else{
     
       err_code=404;
       goto END;
   }
+
+  //memset(&req, 1, sizeof(req));
    
 END:
   if(200 != err_code){
@@ -279,8 +280,10 @@ END:
 
 void* CreateWorker(void * arg){
   int64_t new_sock = (int64_t)arg;
+  pthread_mutex_lock(&mutex);
   printf("CreateWorker\n");
   HeadlerRequest(new_sock);
+  pthread_mutex_unlock(&mutex);
   return NULL;
 }
  
@@ -311,7 +314,6 @@ void tcp_init(const char * ip,short port){
 
   //多线程处理请求
   while(1){
-    pthread_mutex_lock(&mutex);
     printf("多线程ing\n");
     struct sockaddr_in peer;
     socklen_t len=sizeof(peer);
@@ -322,8 +324,8 @@ void tcp_init(const char * ip,short port){
     }
     pthread_t tid;
     pthread_create(&tid,NULL,CreateWorker,(void*)new_sock);
-    pthread_detach(tid);
-    pthread_mutex_unlock(&mutex);
+   // pthread_mutex_unlock(&mutex);
+    pthread_join(tid, NULL);
   }
 }
 
