@@ -26,9 +26,10 @@ typedef struct Request{
   // 为了简单，这里不展开其他headler,如果要展开的话，可以考虑哈希表
 }Request;
 
-/*
+//判断url中的路径在服务器上是否真实存在
 int isDir(char file_path[]){
   struct stat st;
+  //利用stat函数及stat结构体判断当前文件目录是否真实存在
   int ret = stat(file_path,&st);
   if(ret<0){
     return 0;
@@ -53,23 +54,24 @@ void HandlerFilePath(const char* url_path,char file_path[]){
     strcat(file_path,"index.html");
   }
 }
+
 int WriteStaticFile(int64_t sock,char file_path[]){
+  //从sock中读取文件内容
+  //将文件的内容直接写到sock之中，返回给客户端
 }
-*/ 
+
 int ParseCGI(){
   return 404;
 }
 
-int ParseStatic(/*int64_t sock,Request * req*/){
-  /*
-  //1.根据url_path ��取到文件在服务器上的真实路径
+int ParseStatic(int64_t sock,Request * req){
+  
+  //1.根据url_path 读取到文件在服务器上的真实路径
   char file_path[MAX] = {0};
   HandlerFilePath(req->url_path,file_path);
   //2.读取文件，把文件的内容直接写到socket之中
   int err_code = WriteStaticFile(sock,file_path);
   return err_code;
-  */
-  return 404;
 }
 
 
@@ -205,7 +207,6 @@ void Err_404(int64_t sock){
   send(sock,type_line,strlen(type_line),0);
   send(sock,blank_line,strlen(blank_line),0);
   send(sock,html,strlen(html),0);
-  printf("Err_404 OK\n");
 }
 
 void PrintRequest(Request * req){
@@ -255,7 +256,7 @@ void HeadlerRequest(int64_t new_sock){
   //根据读到的Method判断方法，并分析该回应动态响应还是静态响应
   if(strcasecmp(req.Method,"GET")== 0 && req.query_string == NULL){
     //返回静态页面
-    err_code = ParseStatic(/*new_sock,&req*/);
+    err_code = ParseStatic(new_sock,&req);
   }
   else if(strcasecmp(req.Method,"GET") == 0 && req.query_string != NULL){
     //返回动态页面
@@ -269,7 +270,6 @@ void HeadlerRequest(int64_t new_sock){
       goto END;
   }
 
-  //memset(&req, 1, sizeof(req));
    
 END:
   if(200 != err_code){
